@@ -73,6 +73,28 @@ with a `JSON` object to the specified endpoint.  Endpoints have to be
 explicitly removed using `DELETE`.  Make a note of the `Location`
 header when registering the web-hook.
 
+# Running Nesoi =
+
+Requirements:
+
+ - Twisted (core and web)
+ - txgossip
+
+_Nesoi_ is installed as a twistd plugin, so you'll have to start it
+using the `twistd` command-line tool.  See `twistd --help` for more
+information on generic options and such.
+
+The `nesoi` service accepts the following options:
+
+ - `--address IP` listen address (*required*)
+ - `--port PORT` listen port (*required*)
+ - `--data-file FILE` where to store config data (*required*)
+ - `--seed IP:PORT` another nesoi instance to comminicate with
+
+Example:
+
+    twistd nesoi --address 10.2.2.2 --port 6553 --seed 10.2.2.1:6553
+
 # Implementation #
 
 _Nesoi_ is in its foundation a distributed key-value store.  Each
