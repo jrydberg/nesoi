@@ -113,13 +113,27 @@ class Router(Resource):
         request.finish()
         return reason
 
-    def cbControl(self, None, request):
+    def cbControl(self, result, request):
         """
         Callback from controller method.
 
         C{repr} is a provider of L{IRepresentation} that should be
         rendered to the client.
         """
+        rc = 200
+        if type(result) == tuple:
+            rc, result = result
+        elif type(result) == int:
+            rc = result
+
+        if type(result) == dict:
+            write_json(request, result, rc=rc)
+        elif type(result) == str:
+            request.setResponseCode(rc)
+            request.write(str)
+        else:
+            request.setHeader('content-length', 0)
+
         request.finish()
 
     def render(self, request):
@@ -135,9 +149,12 @@ class Router(Resource):
         if method is None:
             request.setResponseCode(http.NOT_ALLOWED)
             return ''
+        input = []
+        if request.method.lower() in ('post', 'put'):
+            input.append(read_json(request))
 
         doneDeferred = defer.maybeDeferred(method, self, request, url,
-                                           **params)
+                                           *input, **params)
         doneDeferred.addCallback(self.cbControl, request)
         doneDeferred.addErrback(self.ebControl, request)
         doneDeferred.addErrback(self.ebInternal, request)

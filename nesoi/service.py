@@ -12,184 +12,280 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from datetime import datetime
+
 from twisted.application import service
-from twisted.web import server, resource
-from txgossip.recipies import KeyStoreMixin, LeaderElectionMixin
-import txgossip
-from nosio import rest
+from twisted.web import server, resource, http
+from txgossip.gossip import Gossiper
+#import txgossip
+from . import rest, keystore
 
 
-class Participant(KeyStoreMixin, LeaderElectionMixin):
+class WebhookResourceMixin:
+    """Mixin for resource controllers that want to provide webhooks
+    subscriptions on their resource.
 
-    def __init__(self, clock, storage):
-        LeaderElectionMixin.__init__(self, clock)
-        KeyStoreMixin.__init__(self, clock, storage, [
-                self.LEADER_KEY, self.VOTE_KEY, self.PRIO_KEY])
-        # The first thing we do is to start an election.
-        self.start_election()
-        self._is_leader = False
+    This mixin only implements the discovery part of the webhooks.  A
+    webhook resource also has to be present in the routing table.
+    """
 
-    def value_changed(self, peer, key, value):
-        """A peer changed one of its values."""
-        if LeaderElectionMixin.value_changed(self, peer, key, value):
-            # This value change was handled by the leader election
-            # mixin.
-            return
+    def head(self, router, request, url, **args):
+        """Response with a link to the subscriptions resource"""
+        request.setHeader('Link', '%s, rel="Subscriptions"' % (
+            str(url.child('web-hooks'))))
+        return 200
 
-        # Pass it through our replication engine:
-        KeyStoreMixin.value_changed(self, peer, key, value)
-        
-        if self._is_leader:
-            # This peer is the leader of the cluster, which means that
-            # we're responsible for firing notifications.
-            pass
-        
-    def peer_alive(self, peer):
-        """The gossiper reports that C{peer} is alive."""
-        self.start_election()
-        self.synchronize_keys_with_peer(peer)
 
-    def peer_dead(self, peer):
-        """The gossiper reports that C{peer} is dead."""
-        self.start_election()
+class WebhookResourceController:
 
-    def leader_elected(self, is_leader, leader):
-        """Leader elected."""
-        self._is_leader = is_leader
-        if is_leader:
-            # Go through and possible trigger all notifications.
-            pass
-        
-
-class ApplicationController:
-
-    def __init__(self, keystore):
+    def __init__(self, clock, keystore, keypattern):
+        """."""
+        self.clock = clock
         self.keystore = keystore
+        self.keypattern = keypattern
 
-    def put(self, request, url, appname=None):
-        """Update application configuration."""
-        config = rest.read_json(request)
-        for required in ('name', 'configuration',):
+    def get(self, router, request, url, hookname=None, **args):
+        """."""
+        if hookname is not None:
+            print "hookname"
+            wkey = 'watcher:%s:%s:' % (self.keypattern,
+                                       hookname)
+            if not wkey in self.keystore:
+                raise FEL()
+            watcher = self.keystore[wkey]
+            if watcher is None:
+                raise rest.NoSuchResourceError()
+            return {
+                'name': watcher['name'],
+                'endpoint': watcher['endpoint']
+                }
+
+        watchers = []
+        for wkey in self.keystore.keys('watcher:*'):
+            print "wkey", wkey
+            watcher = self.keystore[wkey]
+            print "watcher", repr(watcher)
+            if watcher is None:
+                continue
+            if watcher['pattern'] == self.keypattern:
+                watchers.append(watcher)
+
+        data = {}
+        for watcher in watchers:
+            data[watcher['name']] = {
+                'name': watcher['name'],
+                'endpoint': watcher['endpoint']
+                }
+
+        return data
+
+    def _validate_watcher(self, config, hookname=None):
+        for required in ('name', 'endpoint',):
             if not required in config:
                 raise rest.ControllerError(400)
+        if hookname is not None:
+            if config['name'] != hookname:
+                raise rest.ControllerError(400)
 
-        key = 'app:%s' % appname
-        timestamp = str(datetime.datetime.fromtimestamp(
+    def post(self, router, request, url, config, hookname=None, **args):
+        """Create a web-hook watcher."""
+        if hookname is not None:
+            # Can not post to a watcher.
+            raise rest.ControllerError(400)
+        self._validate_watcher(config)
+
+        watcher = {'name': config['name'],
+            'endpoint': config['endpoint'],
+            'pattern': self.keypattern,
+            'last-hit': self.clock.seconds()}
+        wkey = str('watcher:%s:%s' % (self.keypattern, watcher['name']))
+        if wkey in self.keystore and self.keystore[wkey] is not None:
+            print self.keystore.keys()
+            raise rest.ControllerError(409)
+        self.keystore[wkey] = watcher
+        request.setHeader('location', str(url.child(watcher['name'])))
+        return http.CREATED, config
+
+    def put(self, router, request, url, config, hookname=None, **args):
+        """Update an existing web-hook watcher."""
+        if hookname is None:
+            # We cannot put to the collection resource.
+            raise rest.ControllerError(400)
+
+        self._validate_watcher(config, hookname)
+        wkey = str('watcher:%s:%s:' % (self.keypattern, hookname))
+        if not wkey in self.keystore or self.keystore[wkey] is None:
+            raise rest.NoSuchResourceError()
+
+        watcher = self.keystore[wkey]
+        watcher.update({
+            'name': config['name'],
+            'endpoint': config['endpoint']
+            })
+        self.keystore[wkey] = watcher
+        return config
+
+    def delete(self, router, request, url, hookname=None, **args):
+        """Delete a web-hook waltcher."""
+        if hookname is None:
+            raise rest.ControllerError(400)
+
+        wkey = str('watcher:%s:%s' % (self.keypattern, hookname))
+        if not wkey in self.keystore or self.keystore[wkey] is None:
+            raise rest.NoSuchResourceError()
+        self.keystore[wkey] = None
+        return http.NO_CONTENT
+
+
+class ApplicationController(WebhookResourceMixin):
+    """REST controller for application configurations."""
+
+    def __init__(self, clock, keystore):
+        self.clock = clock
+        self.keystore = keystore
+
+    def put(self, router, request, url, config, appname=None):
+        """Update application configuration."""
+        for required in ('name', 'config',):
+            if not required in config:
+                raise rest.ControllerError(400)
+        config['updated_at'] = str(datetime.fromtimestamp(
                 self.clock.seconds()))
+        self.keystore['app:%s' % appname] = config
+        return config
 
-        response_code = 200
-        if not key in self.keystore:
-            response_code=201
-            config['created_at'] = timestamp
-        config['updated_at'] = timestamp
-        config['name'] = appname
-
-        rest.write_json(request, config, rc=response_code)
-    post = put
-
-    def get(self, request, url, appname=None):
+    def get(self, router, request, url, appname=None):
         """Read out application configuration."""
         key = 'app:%s' % appname
-        try:
-            config = self.keystore[key]
-        except KeyError:
+        if not key in self.keystore or self.keystore[key] is None:
             raise rest.NoSuchResourceError()
-        rest.write_json(request, config)
+        return self.keystore[key]
 
 
 class ApplicationCollectionController:
+    """REST controller for listing all applications."""
 
     def __init__(self, keystore):
         self.keystore = keystore
 
-    def get(self, request, url):
+    def get(self, router, request, url):
         """Read out application configuration."""
-        apps = []
+        apps = {}
         for key in self.keystore.keys():
             if key.startswith('app:'):
-                apps.append(self.keystore[key])
-        rest.write_json(request, {'apps': apps})
+                app = self.keystore[key]
+                if app is not None:
+                    apps[app['name']] = app
+        return apps
 
 
 class ServiceHostController:
+    """."""
 
-    def __init__(self, keystore):
+    def __init__(self, clock, keystore):
+        self.clock = clock
         self.keystore = keystore
 
-    def get(self, request, url, srvname=None, hostname=None):
-        if hostname == ':master':
-            master_key = 'srv:%s:__master__' % srvname
-            if not master_key in self.keystore:
-                raise rest.NoSuchResourceError()
-            hostname = self.keystore[master_key]
+    def get(self, router, request, url, srvname=None, hostname=None):
+        """."""
         key = 'srv:%s:%s' % (srvname, hostname)
-        if key not in self.keystore:
+        if key not in self.keystore or self.keystore[key] is None:
             raise rest.NoSuchResourceError()
+        return self.keystore[key]
 
-        config = dict(self.keystore[key])
-        rest.write_json(request, config)
-
-    def put(self, request, url, srvname=None, hostname=None):
-        """.
-        """
-        for required in ('name', 'configuration',):
+    def put(self, router, request, url, config, srvname=None,
+                hostname=None):
+        """."""
+        for required in ('name', 'endpoints'):
             if not required in config:
                 raise rest.ControllerError(400)
-        data = read_json(request)
-        update_master = hostname == ':master'
-        if update_master:
-            hostname = data['name']
-
+        config['updated_at'] = str(datetime.fromtimestamp(
+                self.clock.seconds()))
         key = 'srv:%s:%s' % (srvname, hostname)
-        timestamp = self.clock.seconds()
-        data['updated_at'] = timestamp
-        if not key in self.keystore:
-            data['created_at'] = timestamp
-        self.keystore[key] = data
-
-            master_key = 'srv:%s:__master__' % srvname
-            if self.keystore.get(master_key) != hostname:
-                self.keystore[master_key] = hostname
-
-        rest.write_json(request, config)
+        self.keystore[key] = config
+        return config
 
 
-class ServiceController:
+class ServiceHostCollectionController(WebhookResourceMixin):
 
     def __init__(self, keystore):
         self.keystore = keystore
 
-    def get(self, request, url, srvname=None):
-        key = 'srv:%s:' % srvname
-        for key in self.keystore.keys():
-            if key == 'srv:%s:__master__' % srvname:
-                # ignore the master record.
+    def get(self, router, request, url, srvname=None):
+        srvs = {}
+        keypattern = 'srv:%s:*' % srvname
+        for key in self.keystore.keys(keypattern):
+            if self.keystore[key] is not None:
+                srv = self.keystore[key]
+                srvs[srv['name']] = srv
+        return srvs
+
+
+class ServiceCollectionController:
+
+    def __init__(self, keystore):
+        self.keystore = keystore
+
+    def get(self, router, request, url):
+        """Return a mapping of all known services."""
+        keypattern = 'srv:*:*'
+        services = {}
+        for key in self.keystore.keys('srv:*:*'):
+            if self.keystore[key] is None:
                 continue
-            if key.startswith(srvname):
-                apps.append(self.keystore[key])
-                
-
-        key = 'srv:%s' % appname
-        try:
-            config = self.keystore[key]
-        except KeyError:
-            raise rest.NoSuchResourceError()
-        rest.write_json(request, config)
+            srvname, hostname = key.split(':', 2)[1:]
+            srvhost = self.keystore[key]
+            if not srvname in services:
+                services[srvname] = {
+                    'name': srvname, 'hosts': {}
+                    }
+            services[srvname]['hosts'][hostname] = srvhost
+        return services
 
 
+class Nesoi(service.Service):
 
-
-class Lemek(service.Service):
-
-    def __init__(self, reactor, listen_addr, listen_port):
-        service.Service.__init__(self)
+    def __init__(self, reactor, listen_addr, listen_port, storage):
         self.reactor = reactor
         self._listen_port = listen_port
-        self.participant = Participant(reactor)
-        self._protocol = txgossip.Gossiper(reactor, '%s:%d' % (
-                listen_addr, listen_port), self.participant)
+        self.keystore = keystore.KeyStore(reactor, storage)
+        self._protocol = Gossiper(reactor, '%s:%d' % (
+                listen_addr, listen_port), self.keystore)
+        self._protocol.set_local_state(
+            self.keystore.PRIO_KEY, 0)
+        for key in storage:
+            self._protocol.set_local_state(key, storage[key])
+        self.router = rest.Router()
+
+        # Setup the application controllers:
+        self.router.addController(
+            'app', ApplicationCollectionController(self.keystore))
+        self.router.addController(
+            'app/{appname}/web-hooks', WebhookResourceController(
+                self.reactor, self.keystore, 'app'))
+        self.router.addController(
+            'app/{appname}/web-hooks/{hookname}', WebhookResourceController(
+                self.reactor, self.keystore, 'app'))
+        self.router.addController(
+            'app/{appname}', ApplicationController(
+                self.reactor, self.keystore))
+
+        # Setup the service controllers:
+        self.router.addController(
+            'srv', ServiceCollectionController(self.keystore))
+        self.router.addController(
+            'srv/{srvname}', ServiceHostCollectionController(self.keystore))
+        self.router.addController(
+            'srv/{srvname}/web-hooks', WebhookResourceController(
+                self.reactor, self.keystore, 'srv'))
+        self.router.addController(
+            'srv/{srvname}/web-hooks/{hookname}', WebhookResourceController(
+                self.reactor, self.keystore, 'srv'))
+        self.router.addController(
+            'srv/{srvname}/{hostname}', ServiceHostController(
+                self.reactor, self.keystore))
 
     def startService(self):
         self.reactor.listenUDP(self._listen_port, self._protocol)
         self.reactor.listenTCP(self._listen_port, server.Site(
-                self._resource))
+                self.router))
