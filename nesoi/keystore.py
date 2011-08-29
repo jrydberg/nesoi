@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
+from twisted.web import client
+from twisted.python import log
 from txgossip.recipies import KeyStoreMixin, LeaderElectionMixin
 
 
@@ -20,20 +23,19 @@ class KeyStore(KeyStoreMixin, LeaderElectionMixin):
     key-value store and a leader-election mechanism.
     """
 
-    def __init__(self, clock, storage):
+    def __init__(self, clock, storage, client=client):
         LeaderElectionMixin.__init__(self, clock)
         KeyStoreMixin.__init__(self, clock, storage, [
                 self.LEADER_KEY, self.VOTE_KEY, self.PRIO_KEY])
         # The first thing we do is to start an election.
         self.start_election()
         self._is_leader = False
+        self.client = client
 
     def value_changed(self, peer, key, value):
         """A peer changed one of its values."""
         if key == '__heartbeat__':
             return
-
-        print "changed", key
 
         if LeaderElectionMixin.value_changed(self, peer, key, value):
             # This value change was handled by the leader election
@@ -47,7 +49,7 @@ class KeyStore(KeyStoreMixin, LeaderElectionMixin):
             # This peer is the leader of the cluster, which means that
             # we're responsible for firing notifications.
             if not key.startswith('watcher:'):
-                self._notify(key)
+                self._check_notify(key)
 
         if hasattr(self._storage, "sync"):
             self._storage.sync()
@@ -63,28 +65,32 @@ class KeyStore(KeyStoreMixin, LeaderElectionMixin):
 
     def leader_elected(self, is_leader, leader):
         """Leader elected."""
-        if is_leader:
-            print "elected leader"
-        else:
-            print "elected slave"
         self._is_leader = is_leader
         if is_leader:
             # Go through and possible trigger all notifications.
             for key in self.keys('app:*'):
-                self._notify(key)
+                self._check_notify(key)
             for key in self.keys('srv:*'):
-                self._notify(key)
+                self._check_notify(key)
 
-    def _notify(self, key):
+    def _notify(self, wkey, watcher):
+        """."""
+        def done(result):
+            watcher['last-hit'] = self.clock.seconds()
+            # Verify that the watcher has not been deleted.
+            if wkey in self and self[wkey] is not None:
+                self[wkey] = watcher
+        d = self.client.getPage(str(watcher['endpoint']), method='POST',
+                postdata=json.dumps({'name': watcher['name']}),
+                timeout=3)
+        return d.addCallback(done).addErrback(log.err)
+
+    def _check_notify(self, key):
         """Possible notify listener that something has changed."""
         for wkey in self.keys('watcher:*'):
             watcher = self[wkey]
             if watcher is None:
                 continue
-            print wkey, watcher
             if (key.startswith(watcher['pattern'])
-                and watcher['last-hit'] < self.timestamp_for_key(key)):
-                # Trigger XXX
-                print "TRIGGER", key, repr(watcher)
-                watcher['last-hit'] = self.clock.seconds()
-                self[wkey] = watcher
+                    and watcher['last-hit'] < self.timestamp_for_key(key)):
+                self._notify(wkey, watcher)
