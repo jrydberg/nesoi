@@ -8,12 +8,13 @@ register webhooks that will be notified when something changes.
 _Nesoi_ has three concepts:
 
  * _Applications_ stores configuration for a service.
- * _Service_ holds information about a running application.
- * _Host_ communicate endpoints for a service running on an instance.
+ * _Service_ holds information about instances of a service.
+ * _Host_ communicate endpoints for an instance of a service.
 
 The normal use-case is this: When an application is bootstrapped it
 reads out its configuration from an app-resource.  When done, it
-registers itself as a host for a service that it provides.
+registers itself as a host for a service that it provides.  Clients
+find endpoints for a service by inspecting `/srv/NAME`.
 
 Applications are located under the `/app` tree.  A simple example
 of creating an application configuration:
