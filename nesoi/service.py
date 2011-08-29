@@ -149,8 +149,8 @@ class ApplicationController(WebhookResourceMixin):
         for required in ('name', 'config',):
             if not required in config:
                 raise rest.ControllerError(400)
-        config['updated_at'] = str(datetime.fromtimestamp(
-                self.clock.seconds()))
+        config['updated_at'] = datetime.fromtimestamp(
+                self.clock.seconds()).isoformat()
         self.keystore['app:%s' % appname] = config
         return config
 
@@ -199,8 +199,8 @@ class ServiceHostController:
         for required in ('name', 'endpoints'):
             if not required in config:
                 raise rest.ControllerError(400)
-        config['updated_at'] = str(datetime.fromtimestamp(
-                self.clock.seconds()))
+        config['updated_at'] = datetime.fromtimestamp(
+                self.clock.seconds()).isoformat()
         key = 'srv:%s:%s' % (srvname, hostname)
         self.keystore[key] = config
         return config
