@@ -15,7 +15,7 @@
 from datetime import datetime
 
 from twisted.application import service
-from twisted.web import server, resource, http
+from twisted.web import server, http
 from txgossip.gossip import Gossiper
 #import txgossip
 from . import rest, keystore
@@ -46,12 +46,11 @@ class WebhookResourceController:
 
     def get(self, router, request, url, hookname=None, **args):
         """."""
+        keypattern = self.keypattern % args
         if hookname is not None:
-            print "hookname"
-            wkey = 'watcher:%s:%s:' % (self.keypattern,
-                                       hookname)
+            wkey = 'watcher:%s:%s:' % (keypattern, hookname)
             if not wkey in self.keystore:
-                raise FEL()
+                raise rest.NoSuchResourceError()
             watcher = self.keystore[wkey]
             if watcher is None:
                 raise rest.NoSuchResourceError()
@@ -62,12 +61,10 @@ class WebhookResourceController:
 
         watchers = []
         for wkey in self.keystore.keys('watcher:*'):
-            print "wkey", wkey
             watcher = self.keystore[wkey]
-            print "watcher", repr(watcher)
             if watcher is None:
                 continue
-            if watcher['pattern'] == self.keypattern:
+            if watcher['pattern'] == keypattern:
                 watchers.append(watcher)
 
         data = {}
@@ -89,6 +86,7 @@ class WebhookResourceController:
 
     def post(self, router, request, url, config, hookname=None, **args):
         """Create a web-hook watcher."""
+        keypattern = self.keypattern % args
         if hookname is not None:
             # Can not post to a watcher.
             raise rest.ControllerError(400)
@@ -96,9 +94,9 @@ class WebhookResourceController:
 
         watcher = {'name': config['name'],
             'endpoint': config['endpoint'],
-            'pattern': self.keypattern,
+            'pattern': keypattern,
             'last-hit': self.clock.seconds()}
-        wkey = str('watcher:%s:%s' % (self.keypattern, watcher['name']))
+        wkey = str('watcher:%s:%s' % (keypattern, watcher['name']))
         if wkey in self.keystore and self.keystore[wkey] is not None:
             print self.keystore.keys()
             raise rest.ControllerError(409)
@@ -112,8 +110,9 @@ class WebhookResourceController:
             # We cannot put to the collection resource.
             raise rest.ControllerError(400)
 
+        keypattern = self.keypattern % args
         self._validate_watcher(config, hookname)
-        wkey = str('watcher:%s:%s:' % (self.keypattern, hookname))
+        wkey = str('watcher:%s:%s:' % (keypattern, hookname))
         if not wkey in self.keystore or self.keystore[wkey] is None:
             raise rest.NoSuchResourceError()
 
@@ -130,7 +129,8 @@ class WebhookResourceController:
         if hookname is None:
             raise rest.ControllerError(400)
 
-        wkey = str('watcher:%s:%s' % (self.keypattern, hookname))
+        keypattern = self.keypattern % args
+        wkey = str('watcher:%s:%s' % (keypattern, hookname))
         if not wkey in self.keystore or self.keystore[wkey] is None:
             raise rest.NoSuchResourceError()
         self.keystore[wkey] = None
@@ -192,6 +192,13 @@ class ServiceHostController:
         if key not in self.keystore or self.keystore[key] is None:
             raise rest.NoSuchResourceError()
         return self.keystore[key]
+
+    def delete(self, router, request, url, srvname=None, hostname=None):
+        key = 'srv:%s:%s' % (srvname, hostname)
+        if key not in self.keystore or self.keystore[key] is None:
+            raise rest.NoSuchResourceError()
+        self.keystore[key] = None
+        return http.NO_CONTENT
 
     def put(self, router, request, url, config, srvname=None,
                 hostname=None):
@@ -262,10 +269,10 @@ class Nesoi(service.Service):
             'app', ApplicationCollectionController(self.keystore))
         self.router.addController(
             'app/{appname}/web-hooks', WebhookResourceController(
-                self.reactor, self.keystore, 'app'))
+                self.reactor, self.keystore, 'app:%(appname)s'))
         self.router.addController(
             'app/{appname}/web-hooks/{hookname}', WebhookResourceController(
-                self.reactor, self.keystore, 'app'))
+                self.reactor, self.keystore, 'app:%(appname)s'))
         self.router.addController(
             'app/{appname}', ApplicationController(
                 self.reactor, self.keystore))
@@ -277,10 +284,10 @@ class Nesoi(service.Service):
             'srv/{srvname}', ServiceHostCollectionController(self.keystore))
         self.router.addController(
             'srv/{srvname}/web-hooks', WebhookResourceController(
-                self.reactor, self.keystore, 'srv'))
+                self.reactor, self.keystore, 'srv:%(srvname)s'))
         self.router.addController(
             'srv/{srvname}/web-hooks/{hookname}', WebhookResourceController(
-                self.reactor, self.keystore, 'srv'))
+                self.reactor, self.keystore, 'srv:%(srvname)s'))
         self.router.addController(
             'srv/{srvname}/{hostname}', ServiceHostController(
                 self.reactor, self.keystore))
