@@ -1,0 +1,3 @@
+include *.md
+recursive-include nesoi *.py
+recursive-include twisted *.py
