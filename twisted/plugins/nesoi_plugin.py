@@ -26,7 +26,7 @@ from nesoi import service
 class Options(usage.Options):
 
     optParameters = (
-        ("port", "p", 1235, "The port number to listen on."),
+        ("port", "p", 6553, "The port number to listen on."),
         ("address", "a", None, "The listen address."),
         ("data-file", "d", "nesoi.data", "File to store data in."),
         ("seed", "s", None, "Address to running Nesoi instance.")
