@@ -48,7 +48,7 @@ class WebhookResourceController:
         """."""
         keypattern = self.keypattern % args
         if hookname is not None:
-            wkey = 'watcher:%s:%s:' % (keypattern, hookname)
+            wkey = 'watcher:%s:%s' % (keypattern, hookname)
             if not wkey in self.keystore:
                 raise rest.NoSuchResourceError()
             watcher = self.keystore[wkey]
@@ -112,7 +112,7 @@ class WebhookResourceController:
 
         keypattern = self.keypattern % args
         self._validate_watcher(config, hookname)
-        wkey = str('watcher:%s:%s:' % (keypattern, hookname))
+        wkey = str('watcher:%s:%s' % (keypattern, hookname))
         if not wkey in self.keystore or self.keystore[wkey] is None:
             raise rest.NoSuchResourceError()
 
