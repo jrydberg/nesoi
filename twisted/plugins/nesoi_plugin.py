@@ -18,7 +18,6 @@ from twisted.python import usage
 from twisted.plugin import IPlugin
 from twisted.application.service import IServiceMaker
 from twisted.internet import reactor
-import shelve
 
 from nesoi import service
 
@@ -26,8 +25,8 @@ from nesoi import service
 class Options(usage.Options):
 
     optParameters = (
-        ("port", "p", 6553, "The port number to listen on."),
-        ("address", "a", None, "The listen address."),
+        ("listen-port", "p", 6553, "The port number to listen on."),
+        ("listen-address", "a", None, "The listen address."),
         ("data-file", "d", "nesoi.data", "File to store data in."),
         ("seed", "s", None, "Address to running Nesoi instance.")
         )
@@ -42,13 +41,8 @@ class MyServiceMaker(object):
 
     def makeService(self, options):
         """."""
-        if not options['address']:
+        if not options['listen-address']:
             raise usage.UsageError("listen address must be specified")
-        s = service.Nesoi(
-            reactor, options['address'], int(options['port']),
-            shelve.open(options['data-file'], writeback=True))
-        if options['seed']:
-            s._protocol.handle_new_peers([options['seed']])
-        return s
+        return service.create_service(reactor, options)
 
 serviceMaker = MyServiceMaker()

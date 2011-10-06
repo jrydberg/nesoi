@@ -130,7 +130,7 @@ class Router(Resource):
             write_json(request, result, rc=rc)
         elif type(result) == str:
             request.setResponseCode(rc)
-            request.write(str)
+            request.write(result)
         else:
             request.setHeader('content-length', 0)
 
