@@ -43,7 +43,7 @@ with the service using a simple command like this:
         "http": "http://localhost:5432/"
       },
       "name": "host1",
-      "updated_at": "2011-08-29 11:57:25.867718"
+      "updated_at": 1319523542
     }
 
 The `name` and `endpoints` variables are required. Hosts, and apps can
@@ -87,14 +87,14 @@ information on generic options and such.
 
 The `nesoi` service accepts the following options:
 
- - `--address IP` listen address (*required*)
- - `--port PORT` listen port (*required*)
+ - `--listen-address IP` listen address (*required*)
+ - `--listen-port PORT` listen port (*required*)
  - `--data-file FILE` where to store config data (*required*)
  - `--seed IP:PORT` another nesoi instance to comminicate with
 
 Example:
 
-    twistd nesoi --address 10.2.2.2 --port 6553 --seed 10.2.2.1:6553
+    twistd nesoi --listen-address 10.2.2.2 --listen-port 6553 --seed 10.2.2.1:6553
 
 # Implementation #
 
@@ -119,6 +119,29 @@ sending out the watcher notifications.
 
 The API is quite simple.
 
+## Application Configurations
+
+Application configurations live under `/app`.  You can retreive a
+configuration using `GET /app/<appname>`.  To update a create or
+update a configuration use `PUT /app/<appname>`.
+
+The data pushed to a `/app/<appname>` must be a JSON object holding a
+`config` property.
+
+To get a list of all application configurations do a `GET /app`.
+
+## Services and Hosts
+
+Instances of _applications_ register themselves as a service running
+on a host.  They do this but issuing a `PUT` to `/srv/<appname>/<host>`.
+
+The data pushed to a `/srv/<appname>/<host>` must be a JSON object
+holding a `endpoints` property.
+
+Services can update their state by issuing further `PUT`s.  Also, when
+an instance shuts down it **SHOULD** delete it itself from the
+registry using a `DELETE` on `/srv/<appname>/<host>`.
+
 ## Webhooks (change notifications) ##
 
 _Nesoi_ implements webhooks [1] to allow clients to monitor changes to
@@ -142,11 +165,14 @@ attributes:
  * Name of webhook (`name`)
  * URI to the resource that was changed (`uri`)
 
+Web-hooks can be attached to application configurations
+(`/app/<appname>/web-hooks`) and service (`/srv/<appname>/web-hooks`).
+
 An example:
 
     {
       "name": "node1-test",
-      "uri": "http://host/app/test"
+      "uri": "/app/test"
     }
 
  [1] http://wiki.webhooks.org
