@@ -27,27 +27,22 @@ To list all available applications, issue a GET to `/app`:
 
     $ curl http://localhost:6553/app
     {
-      "dm": {
-        "config": {},
-        "name": "dm",
-        "updated_at": "2011-08-29 11:46:35.739202"
-      }
+      "apps": ["dm"]
     }
 
 When your service has been bootstrapped, register the host instance
 with the service using a simple command like this:
 
-    $ curl -X PUT -d '{"name":"host1", "endpoints":{"http":"http://localhost:5432/"}}' http://localhost:6553/srv/dm/host1
+    $ curl -X PUT -d '{"endpoints":{"http":"http://localhost:5432/"}}' http://localhost:6553/srv/dm/host1
     {
       "endpoints": {
         "http": "http://localhost:5432/"
       },
-      "name": "host1",
       "updated_at": 1319523542
     }
 
-The `name` and `endpoints` variables are required. Hosts, and apps can
-of course be deleted using `DELETE`.
+`endpoints` property is required. Hosts, and apps can of course be
+deleted using `DELETE`.
 
 To make sure that your application instance gets notified about
 changes to the configuration it can register itself with as a
